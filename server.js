@@ -6,7 +6,7 @@ const crypto = require("crypto");
 const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || "0.0.0.0";
 const ROOT = __dirname;
-const MAX_PLAYERS = 5;
+const MAX_PLAYERS = 4;
 const ROUND_DURATION_MS = 12 * 60_000;
 const CHOOSE_DURATION_MS = 15_000;
 const TURN_GAP_MS = 4_000;
@@ -80,6 +80,19 @@ function normalizeWord(value) {
 function cleanName(value, fallback) {
   const name = String(value || "").trim().slice(0, 24);
   return name || fallback;
+}
+
+function createPlayer(playerId, playerName, isHost = false) {
+  return {
+    id: playerId,
+    name: cleanName(playerName, isHost ? "Host" : "Jogador"),
+    score: 0,
+    isHost,
+    connected: true,
+    teamId: null,
+    voiceEnabled: false,
+    voiceMuted: false,
+  };
 }
 
 function makeRoomCode() {
@@ -171,9 +184,59 @@ function maskWord(word) {
     .join(" ");
 }
 
+function getTeamMap(room) {
+  const teams = new Map();
+  for (const player of room.players) {
+    if (!player.teamId) {
+      continue;
+    }
+    if (!teams.has(player.teamId)) {
+      teams.set(player.teamId, []);
+    }
+    teams.get(player.teamId).push(player);
+  }
+  return teams;
+}
+
+function areTeamsReady(room) {
+  if (room.players.length !== 4) {
+    return false;
+  }
+  const teams = getTeamMap(room);
+  return teams.size === 2 && [...teams.values()].every((members) => members.length === 2);
+}
+
+function getPartner(room, playerId) {
+  const player = getPlayer(room, playerId);
+  if (!player?.teamId) {
+    return null;
+  }
+  return room.players.find((item) => item.teamId === player.teamId && item.id !== playerId) || null;
+}
+
+function clearPairing(room) {
+  room.pendingInvite = null;
+  for (const player of room.players) {
+    player.teamId = null;
+  }
+}
+
+function assignTeamsFromAcceptedInvite(room, fromId, toId) {
+  const teamA = randomId("team");
+  const teamB = randomId("team");
+  const chosenPair = new Set([fromId, toId]);
+
+  for (const player of room.players) {
+    player.teamId = chosenPair.has(player.id) ? teamA : teamB;
+  }
+
+  room.pendingInvite = null;
+}
+
 function serializeRoom(room, viewerId) {
   const me = getPlayer(room, viewerId);
   const drawer = getDrawer(room);
+  const partner = me ? getPartner(room, viewerId) : null;
   const now = Date.now();
   const timeLeftMs = room.deadlineAt ? Math.max(0, room.deadlineAt - now) : 0;
   const guessedIds = new Set(room.guessedPlayerIds);
@@ -191,6 +254,11 @@ function serializeRoom(room, viewerId) {
           isHost: me.isHost,
           score: me.score,
           hasGuessed: guessedIds.has(me.id),
+          teamId: me.teamId,
+          partnerId: partner?.id || null,
+          partnerName: partner?.name || "",
+          voiceEnabled: me.voiceEnabled,
+          voiceMuted: me.voiceMuted,
         }
       : null,
     drawerId: room.drawerId,
@@ -203,6 +271,9 @@ function serializeRoom(room, viewerId) {
       connected: player.connected,
       hasGuessed: guessedIds.has(player.id),
       isDrawer: player.id === room.drawerId,
+      teamId: player.teamId,
+      voiceEnabled: player.voiceEnabled,
+      voiceMuted: player.voiceMuted,
     })),
     strokes: room.strokes,
     liveStroke: room.liveStroke,
@@ -210,6 +281,15 @@ function serializeRoom(room, viewerId) {
     roomChat: room.roomChat,
     timeLeftMs,
     maxPlayers: MAX_PLAYERS,
+    teamsReady: areTeamsReady(room),
+    pendingInvite: room.pendingInvite
+      ? {
+          fromId: room.pendingInvite.fromId,
+          fromName: getPlayer(room, room.pendingInvite.fromId)?.name || "",
+          toId: room.pendingInvite.toId,
+          toName: getPlayer(room, room.pendingInvite.toId)?.name || "",
+        }
+      : null,
     wordHint: room.word && viewerId !== room.drawerId && room.phase === "playing" ? maskWord(room.word) : "",
     revealedWord: room.phase === "finished" || room.phase === "roundEnd" ? room.word || "" : "",
     chosenWord: viewerId === room.drawerId ? room.word || "" : "",
@@ -233,6 +313,18 @@ function serializePublicRoom(room) {
       isHost: player.isHost,
     })),
   };
+}
+
+function sendEventToPlayer(playerId, payload) {
+  const listeners = eventStreams.get(playerId);
+  if (!listeners || !listeners.size) {
+    return;
+  }
+
+  const packet = `data: ${JSON.stringify(payload)}\n\n`;
+  for (const res of listeners) {
+    res.write(packet);
+  }
 }
 
 function pushRoomState(room) {
@@ -313,7 +405,7 @@ function startPlaying(room, chosenWord) {
 function beginTurn(room) {
   clearRoomTimer(room);
 
-  if (room.players.length < 2) {
+  if (room.players.length < 4 || !areTeamsReady(room)) {
     room.phase = "lobby";
     room.drawerId = null;
     room.startedAt = null;
@@ -322,7 +414,7 @@ function beginTurn(room) {
     room.wordOptions = [];
     room.strokes = [];
     room.liveStroke = null;
-    systemMessage(room, "Aguardando pelo menos 2 jogadores.");
+    systemMessage(room, "Aguardando 4 jogadores com as duplas fechadas.");
     pushRoomState(room);
     return;
   }
@@ -372,16 +464,9 @@ function createRoom(playerName) {
     guessedPlayerIds: [],
     roundChat: [],
     roomChat: [],
+    pendingInvite: null,
     timer: null,
-    players: [
-      {
-        id: playerId,
-        name: cleanName(playerName, "Host"),
-        score: 0,
-        isHost: true,
-        connected: true,
-      },
-    ],
+    players: [createPlayer(playerId, playerName, true)],
   };
 
   rooms.set(roomCode, room);
@@ -400,13 +485,7 @@ function joinRoom(roomCode, playerName) {
   }
 
   const playerId = randomId("player");
-  const player = {
-    id: playerId,
-    name: cleanName(playerName, `Jogador ${room.players.length + 1}`),
-    score: 0,
-    isHost: false,
-    connected: true,
-  };
+  const player = createPlayer(playerId, playerName, false);
 
   room.players.push(player);
   playerToRoom.set(playerId, room.code);
@@ -431,6 +510,12 @@ function leaveRoom(playerId) {
   const player = getPlayer(room, playerId);
   room.players = room.players.filter((item) => item.id !== playerId);
   room.guessedPlayerIds = room.guessedPlayerIds.filter((id) => id !== playerId);
+  if (room.pendingInvite && (room.pendingInvite.fromId === playerId || room.pendingInvite.toId === playerId)) {
+    room.pendingInvite = null;
+  }
+  if (player?.teamId) {
+    clearPairing(room);
+  }
   playerToRoom.delete(playerId);
   eventStreams.delete(playerId);
 
@@ -450,7 +535,7 @@ function leaveRoom(playerId) {
     }
   }
 
-  if (room.players.length < 2 && room.phase !== "lobby" && room.phase !== "finished") {
+  if (room.players.length < 4 && room.phase !== "lobby" && room.phase !== "finished") {
     clearRoomTimer(room);
     room.phase = "lobby";
     room.turnNumber = 0;
@@ -461,6 +546,7 @@ function leaveRoom(playerId) {
     room.deadlineAt = null;
     room.strokes = [];
     room.liveStroke = null;
+    clearPairing(room);
     systemMessage(room, "Partida interrompida por falta de jogadores.");
   }
 
@@ -513,8 +599,11 @@ function handleAction(playerId, type, payload) {
     if (!player.isHost) {
       throw new Error("Só o host pode iniciar.");
     }
-    if (room.players.length < 2) {
-      throw new Error("São necessários pelo menos 2 jogadores.");
+    if (room.players.length !== 4) {
+      throw new Error("O modo em dupla precisa de 4 jogadores.");
+    }
+    if (!areTeamsReady(room)) {
+      throw new Error("Formem as duas duplas antes de iniciar.");
     }
     room.players.forEach((item) => {
       item.score = 0;
@@ -526,6 +615,69 @@ function handleAction(playerId, type, payload) {
     room.liveStroke = null;
     systemMessage(room, `${player.name} iniciou uma nova partida.`);
     beginTurn(room);
+    return;
+  }
+
+  if (type === "invite-partner") {
+    if (room.phase !== "lobby") {
+      throw new Error("As duplas só podem ser definidas no lobby.");
+    }
+    if (room.players.length !== 4) {
+      throw new Error("As duplas aparecem quando a sala tiver 4 jogadores.");
+    }
+    if (player.teamId) {
+      throw new Error("Você já tem dupla definida.");
+    }
+    if (room.pendingInvite) {
+      throw new Error("Já existe um convite pendente.");
+    }
+    const targetId = String(payload.targetId || "");
+    const target = getPlayer(room, targetId);
+    if (!target || target.id === playerId) {
+      throw new Error("Jogador inválido para dupla.");
+    }
+    if (target.teamId) {
+      throw new Error("Esse jogador já está em uma dupla.");
+    }
+    room.pendingInvite = { fromId: playerId, toId: targetId };
+    systemMessage(room, `${player.name} chamou ${target.name} para formar dupla.`);
+    pushRoomState(room);
+    return;
+  }
+
+  if (type === "respond-partner-invite") {
+    if (!room.pendingInvite || room.pendingInvite.toId !== playerId) {
+      throw new Error("Nenhum convite pendente para você.");
+    }
+    const inviter = getPlayer(room, room.pendingInvite.fromId);
+    if (!inviter) {
+      room.pendingInvite = null;
+      pushRoomState(room);
+      return;
+    }
+    if (!payload.accept) {
+      systemMessage(room, `${player.name} recusou o convite de dupla de ${inviter.name}.`);
+      room.pendingInvite = null;
+      pushRoomState(room);
+      return;
+    }
+    assignTeamsFromAcceptedInvite(room, inviter.id, playerId);
+    const otherPlayers = room.players.filter((item) => item.teamId && item.teamId !== inviter.teamId);
+    systemMessage(room, `${inviter.name} e ${player.name} agora jogam juntos.`);
+    if (otherPlayers.length === 2) {
+      systemMessage(room, `${otherPlayers[0].name} e ${otherPlayers[1].name} ficaram na outra dupla.`);
+    }
+    pushRoomState(room);
+    return;
+  }
+
+  if (type === "reset-teams") {
+    if (!player.isHost || room.phase !== "lobby") {
+      throw new Error("Só o host pode refazer as duplas no lobby.");
+    }
+    clearPairing(room);
+    systemMessage(room, "As duplas foram resetadas.");
+    pushRoomState(room);
     return;
   }
 
@@ -559,16 +711,29 @@ function handleAction(playerId, type, payload) {
 
     const isCorrect = normalizeWord(guessText) === normalizeWord(room.word);
     if (isCorrect) {
+      const partner = getPartner(room, room.drawerId);
+      if (!partner || partner.id !== playerId) {
+        roundMessage(room, {
+          type: "system",
+          text: `${player.name} acertou, mas apenas o par do desenhista pontua nesta rodada.`,
+        });
+        pushRoomState(room);
+        return;
+      }
       const awardedPoints = computeGuessPoints(room);
       room.guessedPlayerIds.push(playerId);
       player.score += awardedPoints;
+      const drawer = getDrawer(room);
+      if (drawer) {
+        drawer.score += awardedPoints;
+      }
       roundMessage(room, {
         type: "correct",
         playerId,
         playerName: player.name,
         text: "acertou!",
       });
-      systemMessage(room, `${player.name} acertou a palavra e marcou ${awardedPoints} pontos.`);
+      systemMessage(room, `${player.name} acertou a palavra e a dupla marcou ${awardedPoints} pontos.`);
       pushRoomState(room);
       finishTurn(room, "guessed");
       return;
@@ -598,6 +763,27 @@ function handleAction(playerId, type, payload) {
       createdAt: Date.now(),
     }, 100);
     pushRoomState(room);
+    return;
+  }
+
+  if (type === "voice-state") {
+    player.voiceEnabled = Boolean(payload.enabled);
+    player.voiceMuted = Boolean(payload.muted);
+    pushRoomState(room);
+    return;
+  }
+
+  if (type === "voice-signal") {
+    const targetId = String(payload.targetId || "");
+    const target = getPlayer(room, targetId);
+    if (!target) {
+      throw new Error("Destino de voz não encontrado.");
+    }
+    sendEventToPlayer(targetId, {
+      type: "voice-signal",
+      fromId: playerId,
+      data: payload.data || {},
+    });
     return;
   }
 

@@ -21,9 +21,9 @@
         </p>
 
         <div class="feature-row">
-          <span>Até 5 jogadores</span>
-          <span>Pontuação por tempo</span>
-          <span>Linha, formas e borracha</span>
+          <span>4 jogadores</span>
+          <span>Duplas 2x2</span>
+          <span>Voz opcional</span>
         </div>
 
         <form id="entryForm" class="entry-card">
@@ -84,6 +84,8 @@
               <option value="5">5</option>
             </select>
           </label>
+          <button id="voiceToggleButton" class="ghost-button" type="button">Entrar na voz</button>
+          <button id="muteToggleButton" class="ghost-button" type="button" disabled>Mutar</button>
           <button id="startGameButton" class="primary-button" type="button">Iniciar</button>
           <button id="leaveRoomButton" class="ghost-button" type="button">Sair</button>
         </div>
@@ -102,6 +104,8 @@
             <strong>Pontos por acerto</strong>
             <p>Até 1 min: 10 pts · 1 a 5 min: 3 pts · 5 a 10 min: 2 pts · acima de 10 min: 1 pt</p>
           </div>
+          <div id="teamPanel" class="team-panel"></div>
+          <button id="resetTeamsButton" class="ghost-button hidden" type="button">Refazer duplas</button>
           <div id="playersList" class="players-list"></div>
         </aside>
 
