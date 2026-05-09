@@ -217,6 +217,24 @@ function serializeRoom(room, viewerId) {
   };
 }
 
+function serializePublicRoom(room) {
+  return {
+    roomCode: room.code,
+    phase: room.phase,
+    rounds: room.rounds,
+    roundNumber: room.roundNumber,
+    playerCount: room.players.length,
+    maxPlayers: MAX_PLAYERS,
+    hostName: room.players[0]?.name || "Host",
+    players: room.players.map((player) => ({
+      id: player.id,
+      name: player.name,
+      score: player.score,
+      isHost: player.isHost,
+    })),
+  };
+}
+
 function pushRoomState(room) {
   for (const player of room.players) {
     const listeners = eventStreams.get(player.id);
@@ -656,6 +674,20 @@ async function handleApi(req, res, url) {
       playerId,
       room: serializeRoom(room, playerId),
     });
+    return true;
+  }
+
+  if (req.method === "GET" && pathname === "/api/rooms") {
+    const publicRooms = [...rooms.values()]
+      .filter((room) => room.players.length > 0)
+      .map(serializePublicRoom)
+      .sort((a, b) => {
+        if (a.phase === "lobby" && b.phase !== "lobby") return -1;
+        if (a.phase !== "lobby" && b.phase === "lobby") return 1;
+        return a.roomCode.localeCompare(b.roomCode);
+      });
+
+    sendJson(res, 200, { rooms: publicRooms });
     return true;
   }
 

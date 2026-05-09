@@ -5,8 +5,10 @@ const session = {
 
 const state = {
   room: null,
+  publicRooms: [],
   eventSource: null,
   timerHandle: null,
+  roomsPollHandle: null,
   activeTool: "pen",
   color: "#151515",
   size: 4,
@@ -22,6 +24,8 @@ const playerNameInput = document.querySelector("#playerNameInput");
 const roomCodeInput = document.querySelector("#roomCodeInput");
 const createRoomButton = document.querySelector("#createRoomButton");
 const joinRoomButton = document.querySelector("#joinRoomButton");
+const refreshRoomsButton = document.querySelector("#refreshRoomsButton");
+const openRoomsList = document.querySelector("#openRoomsList");
 const roomCodeLabel = document.querySelector("#roomCodeLabel");
 const phaseLabel = document.querySelector("#phaseLabel");
 const timerLabel = document.querySelector("#timerLabel");
@@ -56,6 +60,7 @@ resizeObserver.observe(boardFrame);
 
 createRoomButton.addEventListener("click", () => createRoom());
 joinRoomButton.addEventListener("click", () => joinRoom());
+refreshRoomsButton.addEventListener("click", () => refreshPublicRooms(true));
 startGameButton.addEventListener("click", () => sendAction("start-game"));
 leaveRoomButton.addEventListener("click", leaveRoom);
 roundsSelect.addEventListener("change", () => sendAction("set-rounds", { rounds: Number(roundsSelect.value) }));
@@ -97,6 +102,7 @@ window.addEventListener("beforeunload", () => {
 render();
 restoreSession();
 playerNameInput.value = session.playerName;
+startPublicRoomsPolling();
 
 async function api(url, options = {}) {
   const response = await fetch(url, {
@@ -160,6 +166,7 @@ async function joinRoom() {
 function connectToRoom(playerId, room) {
   session.playerId = playerId;
   sessionStorage.setItem("draw-battle-player-id", playerId);
+  stopPublicRoomsPolling();
   setRoom(room);
   openEvents();
 }
@@ -212,6 +219,7 @@ function resetSession() {
   session.playerId = "";
   sessionStorage.removeItem("draw-battle-player-id");
   state.room = null;
+  startPublicRoomsPolling();
   render();
 }
 
@@ -219,6 +227,36 @@ function setRoom(room) {
   state.room = room;
   roundsSelect.value = String(room.rounds || 3);
   render();
+}
+
+async function refreshPublicRooms(forceRender = false) {
+  if (session.playerId) {
+    return;
+  }
+
+  try {
+    const payload = await api("/api/rooms");
+    state.publicRooms = Array.isArray(payload.rooms) ? payload.rooms : [];
+    if (forceRender || !state.room) {
+      renderOpenRooms();
+    }
+  } catch {
+    state.publicRooms = [];
+    if (forceRender || !state.room) {
+      renderOpenRooms();
+    }
+  }
+}
+
+function startPublicRoomsPolling() {
+  clearInterval(state.roomsPollHandle);
+  refreshPublicRooms(true);
+  state.roomsPollHandle = setInterval(() => refreshPublicRooms(true), 5000);
+}
+
+function stopPublicRoomsPolling() {
+  clearInterval(state.roomsPollHandle);
+  state.roomsPollHandle = null;
 }
 
 async function sendAction(type, payload = {}) {
@@ -350,6 +388,7 @@ function render() {
   gameScreen.classList.toggle("hidden", !hasRoom);
 
   if (!hasRoom) {
+    renderOpenRooms();
     renderBoardEmpty();
     return;
   }
@@ -371,6 +410,36 @@ function render() {
   renderOverlay(room);
   renderBoard();
   startCountdown();
+}
+
+function renderOpenRooms() {
+  if (!openRoomsList) {
+    return;
+  }
+
+  if (!state.publicRooms.length) {
+    openRoomsList.innerHTML = `<p class="open-rooms__empty">Nenhuma sala aberta no momento.</p>`;
+    return;
+  }
+
+  openRoomsList.innerHTML = state.publicRooms
+    .map((room) => `
+      <article class="room-card">
+        <div class="room-card__main">
+          <strong>${escapeHtml(room.roomCode)}</strong>
+          <p>${escapeHtml(room.hostName)} · ${room.playerCount}/${room.maxPlayers} jogadores · ${room.phase === "lobby" ? "Lobby" : "Em jogo"}</p>
+        </div>
+        <button class="primary-button room-card__button" type="button" data-room-code="${escapeHtml(room.roomCode)}">Entrar</button>
+      </article>
+    `)
+    .join("");
+
+  openRoomsList.querySelectorAll("[data-room-code]").forEach((button) => {
+    button.addEventListener("click", () => {
+      roomCodeInput.value = button.dataset.roomCode || "";
+      joinRoom();
+    });
+  });
 }
 
 function renderPlayers(room) {
