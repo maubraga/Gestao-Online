@@ -2,6 +2,7 @@ const http = require("http");
 const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");
+const crypto = require("crypto");
 const { createClient } = require("@supabase/supabase-js");
 
 const PORT = Number(process.env.PORT || 4173);
@@ -85,6 +86,38 @@ function normalizeProjectName(value) {
 
 function buildToken(username) {
   return `gestao-gastos-token:${slugify(username)}`;
+}
+
+function isPasswordHash(value) {
+  return String(value || "").startsWith("pbkdf2$");
+}
+
+function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
+  const iterations = 120000;
+  const keyLength = 64;
+  const digest = "sha512";
+  const hash = crypto.pbkdf2Sync(String(password || ""), salt, iterations, keyLength, digest).toString("hex");
+  return `pbkdf2$${iterations}$${salt}$${hash}`;
+}
+
+function verifyPassword(storedPassword, plainPassword) {
+  const stored = String(storedPassword || "");
+
+  if (!isPasswordHash(stored)) {
+    return stored === String(plainPassword || "");
+  }
+
+  const [, iterationsRaw, salt, expectedHash] = stored.split("$");
+  const iterations = Number(iterationsRaw || 0);
+  if (!iterations || !salt || !expectedHash) {
+    return false;
+  }
+
+  const computedHash = crypto
+    .pbkdf2Sync(String(plainPassword || ""), salt, iterations, 64, "sha512")
+    .toString("hex");
+
+  return crypto.timingSafeEqual(Buffer.from(expectedHash, "hex"), Buffer.from(computedHash, "hex"));
 }
 
 function sanitizeEntry(entry, fallbackProject, fallbackType) {
@@ -409,11 +442,6 @@ async function getAuthenticatedUser(req) {
   return findUserByToken(getBearerToken(req));
 }
 
-async function findUserByCredentials(username, password) {
-  const db = await readAccountsDb();
-  return db.users.find((user) => user.username === username && user.password === password) || null;
-}
-
 async function findUserByToken(token) {
   if (!token) {
     return null;
@@ -428,11 +456,17 @@ async function handleAuthApi(req, res, url) {
     const body = await readBody(req);
     const username = String(body.username || "").trim().toLowerCase();
     const password = String(body.password || "");
-    const user = await findUserByCredentials(username, password);
+    const db = await readAccountsDb();
+    const user = db.users.find((item) => item.username === username) || null;
 
-    if (!user) {
+    if (!user || !verifyPassword(user.password, password)) {
       sendJson(res, 401, { error: "Usuario ou senha invalidos." });
       return true;
+    }
+
+    if (!isPasswordHash(user.password)) {
+      user.password = hashPassword(password);
+      await writeAccountsDb(db);
     }
 
     if (USE_SUPABASE) {
@@ -511,7 +545,7 @@ async function handleAdminUsersApi(req, res, user) {
 
     const nextUser = sanitizeUserRecord({
       username,
-      password,
+      password: hashPassword(password),
       displayName: username,
       role: "user",
     });
@@ -526,6 +560,51 @@ async function handleAdminUsersApi(req, res, user) {
     }
 
     sendJson(res, 200, { user: buildPublicUser(nextUser) });
+    return true;
+  }
+
+  if (req.method === "DELETE") {
+    const body = await readBody(req);
+    const username = String(body.username || "").trim().toLowerCase();
+
+    if (!username) {
+      sendJson(res, 400, { error: "Usuario invalido." });
+      return true;
+    }
+
+    if (username === user.username) {
+      sendJson(res, 400, { error: "O admin logado nao pode excluir a propria conta." });
+      return true;
+    }
+
+    const db = await readAccountsDb();
+    const target = db.users.find((item) => item.username === username);
+
+    if (!target) {
+      sendJson(res, 404, { error: "Usuario nao encontrado." });
+      return true;
+    }
+
+    db.users = db.users.filter((item) => item.username !== username);
+    await writeAccountsDb(db);
+
+    if (!USE_SUPABASE) {
+      const userFile = getUserFilePath(username);
+      if (fs.existsSync(userFile)) {
+        await fsp.rm(userFile, { force: true });
+      }
+    } else {
+      const { error } = await supabase
+        .from("projects")
+        .delete()
+        .eq("owner_username", username);
+
+      if (error) {
+        throw new Error(`Falha ao excluir projetos do usuario: ${error.message}`);
+      }
+    }
+
+    sendJson(res, 200, { ok: true });
     return true;
   }
 

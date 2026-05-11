@@ -419,10 +419,32 @@ function renderAdminUsers(users) {
         </div>
         <div class="project-chip-actions">
           <small class="project-chip-count">${user.isAdmin ? "admin" : "usuario"}</small>
+          ${user.username !== state.authUser?.username ? `<button type="button" class="project-chip-delete" data-delete-user="${escapeHtml(user.username)}">Excluir</button>` : ""}
         </div>
       </article>
     `)
     .join("");
+
+  adminUsersList.querySelectorAll("[data-delete-user]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const username = button.dataset.deleteUser || "";
+
+      if (!username) {
+        return;
+      }
+
+      try {
+        await api("/api/admin/users", {
+          method: "DELETE",
+          body: { username },
+        });
+        setAdminFeedback("Usuario excluido com sucesso.", false);
+        await refreshAdminUsers();
+      } catch (error) {
+        setAdminFeedback(error?.message || "Nao foi possivel excluir o usuario.", true);
+      }
+    });
+  });
 }
 
 async function handleAdminUserSubmit(event) {
