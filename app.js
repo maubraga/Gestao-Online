@@ -920,23 +920,65 @@ function removeUnusedSheets(workbook) {
 }
 
 async function openCamera() {
+  if (shouldUseNativeCameraCapture()) {
+    await openNativeCameraCapture();
+    return;
+  }
+
   if (!navigator.mediaDevices?.getUserMedia) {
     receiptInput.click();
     return;
   }
 
   try {
+    closeCamera();
+
     cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "environment" } },
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        aspectRatio: { ideal: 4 / 3 },
+      },
       audio: false,
     });
+
+    const [videoTrack] = cameraStream.getVideoTracks();
+    await optimizeCameraTrack(videoTrack);
+
     cameraVideo.srcObject = cameraStream;
     cameraModal.classList.remove("hidden");
     cameraModal.setAttribute("aria-hidden", "false");
+    await waitForCameraFrame();
   } catch (error) {
     console.error(error);
     receiptInput.click();
   }
+}
+
+function shouldUseNativeCameraCapture() {
+  return window.matchMedia?.("(pointer: coarse)")?.matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
+async function openNativeCameraCapture() {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  input.multiple = false;
+  input.setAttribute("capture", "environment");
+
+  await new Promise((resolve) => {
+    input.addEventListener("change", () => {
+      const files = Array.from(input.files || []);
+      if (files.length) {
+        appendFilesToReceiptInput(files);
+        renderReceiptPreview();
+      }
+      resolve();
+    }, { once: true });
+
+    input.click();
+  });
 }
 
 function closeCamera() {
@@ -952,6 +994,15 @@ function closeCamera() {
 
 async function capturePhoto() {
   if (!cameraStream) {
+    return;
+  }
+
+  const nativePhotoBlob = await captureNativePhotoBlob();
+  if (nativePhotoBlob) {
+    const file = new File([nativePhotoBlob], `comprovante-${Date.now()}.jpg`, { type: nativePhotoBlob.type || "image/jpeg" });
+    appendFilesToReceiptInput([file]);
+    renderReceiptPreview();
+    closeCamera();
     return;
   }
 
@@ -977,6 +1028,77 @@ async function capturePhoto() {
   appendFilesToReceiptInput([file]);
   renderReceiptPreview();
   closeCamera();
+}
+
+async function optimizeCameraTrack(track) {
+  if (!track?.applyConstraints || !track.getCapabilities) {
+    return;
+  }
+
+  const capabilities = track.getCapabilities();
+  const advanced = [];
+
+  if (Array.isArray(capabilities.focusMode)) {
+    if (capabilities.focusMode.includes("continuous")) {
+      advanced.push({ focusMode: "continuous" });
+    } else if (capabilities.focusMode.includes("single-shot")) {
+      advanced.push({ focusMode: "single-shot" });
+    }
+  }
+
+  if (capabilities.width?.max && capabilities.height?.max) {
+    advanced.push({
+      width: capabilities.width.max,
+      height: capabilities.height.max,
+    });
+  }
+
+  if (capabilities.zoom?.min !== undefined && capabilities.zoom?.max !== undefined) {
+    const neutralZoom = Math.min(Math.max(1, capabilities.zoom.min), capabilities.zoom.max);
+    advanced.push({ zoom: neutralZoom });
+  }
+
+  if (!advanced.length) {
+    return;
+  }
+
+  try {
+    await track.applyConstraints({ advanced });
+  } catch (error) {
+    console.warn("Nao foi possivel otimizar a camera.", error);
+  }
+}
+
+async function waitForCameraFrame() {
+  if (cameraVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+    await cameraVideo.play().catch(() => {});
+    return;
+  }
+
+  await new Promise((resolve) => {
+    const onReady = async () => {
+      cameraVideo.removeEventListener("loadedmetadata", onReady);
+      await cameraVideo.play().catch(() => {});
+      resolve();
+    };
+
+    cameraVideo.addEventListener("loadedmetadata", onReady, { once: true });
+  });
+}
+
+async function captureNativePhotoBlob() {
+  const [track] = cameraStream?.getVideoTracks?.() || [];
+  if (!track || typeof ImageCapture === "undefined") {
+    return null;
+  }
+
+  try {
+    const imageCapture = new ImageCapture(track);
+    return await imageCapture.takePhoto();
+  } catch (error) {
+    console.warn("Captura nativa indisponivel, usando quadro do video.", error);
+    return null;
+  }
 }
 
 async function triggerDownload(buffer, fileName) {
