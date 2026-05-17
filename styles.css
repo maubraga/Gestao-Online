@@ -440,7 +440,15 @@ h3 {
   box-shadow: inset 0 0 14px rgba(38, 94, 189, 0.05);
 }
 
+.project-chip-main {
+  flex: 1;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
 .project-chip-name,
+.project-chip-open,
 .project-chip-delete,
 .project-chip-count,
 .ghost-button,
@@ -454,7 +462,6 @@ h3 {
 }
 
 .project-chip-name {
-  flex: 1;
   display: flex;
   align-items: center;
   border: 1px solid transparent;
@@ -466,6 +473,12 @@ h3 {
 .project-chip-name span {
   font-size: 0.98rem;
   font-weight: 700;
+}
+
+.project-chip-hint {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
 }
 
 .project-chip-actions {
@@ -488,6 +501,16 @@ h3 {
   color: var(--orange);
   font-size: 0.92rem;
   font-weight: 700;
+}
+
+.project-chip-open {
+  min-width: 96px;
+  border: 1px solid rgba(117, 170, 255, 0.22);
+  background: linear-gradient(180deg, #17345f, #0c2142);
+  color: #f1f6ff;
+  box-shadow:
+    inset 0 0 18px rgba(92, 162, 255, 0.1),
+    0 0 18px rgba(40, 118, 255, 0.12);
 }
 
 .project-chip-delete,
@@ -582,9 +605,30 @@ h3 {
 .ghost-button:active,
 .primary-button:active,
 .project-chip-name:active,
+.project-chip-open:active,
 .project-chip-delete:active,
 .remove-button:active {
   transform: translateY(1px);
+}
+
+@media (max-width: 720px) {
+  .project-chip {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .project-chip-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .project-chip-count,
+  .project-chip-open,
+  .project-chip-delete {
+    min-width: 0;
+    width: 100%;
+  }
 }
 
 .primary-button:disabled {

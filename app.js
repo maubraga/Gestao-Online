@@ -42,6 +42,7 @@ const workspace = document.querySelector("#workspace");
 const userNameInput = document.querySelector("#userName");
 const projectNameInput = document.querySelector("#projectName");
 const projectList = document.querySelector("#projectList");
+const projectFeedback = document.querySelector("#projectFeedback");
 const reportTypeInput = document.querySelector("#reportType");
 const setupSubmitButton = document.querySelector("#setupSubmitButton");
 const openProjectButton = document.querySelector("#openProjectButton");
@@ -57,6 +58,7 @@ const summaryType = document.querySelector("#summaryType");
 const clearEntryButton = document.querySelector("#clearEntryButton");
 const changeSetupButton = document.querySelector("#changeSetupButton");
 const downloadButton = document.querySelector("#downloadButton");
+const entrySubmitButton = entryForm.querySelector('button[type="submit"]');
 const openCameraButton = document.querySelector("#openCameraButton");
 const closeCameraButton = document.querySelector("#closeCameraButton");
 const capturePhotoButton = document.querySelector("#capturePhotoButton");
@@ -358,15 +360,27 @@ async function handleEntrySubmit(event) {
   }
 
   state.entries.unshift(entry);
+  renderEntries();
+  resetEntryForm();
+  updateProjectCountLocally(state.projectId, state.entries.length);
+  setProjectFeedback("Item salvo e sincronizando projeto...", false);
+  setEntrySubmitState(true);
 
   try {
     await persistCurrentProject();
-    renderEntries();
-    resetEntryForm();
-    await refreshProjects();
+    setProjectFeedback("Item salvo com sucesso.", false);
+    refreshProjects().catch((error) => {
+      console.error(error);
+    });
   } catch (error) {
     console.error(error);
+    state.entries = state.entries.filter((savedEntry) => savedEntry.id !== entry.id);
+    renderEntries();
+    updateProjectCountLocally(state.projectId, state.entries.length);
+    setProjectFeedback("Nao foi possivel salvar o item no projeto.", true);
     window.alert("Nao foi possivel salvar o item no projeto.");
+  } finally {
+    setEntrySubmitState(false);
   }
 }
 
@@ -501,11 +515,15 @@ function renderProjects() {
   projectList.innerHTML = state.projects
     .map((project) => `
       <article class="project-chip">
-        <button type="button" class="project-chip-name" data-open-project="${project.id}">
-          <span>${escapeHtml(project.name)}</span>
-        </button>
+        <div class="project-chip-main">
+          <button type="button" class="project-chip-name" data-open-project="${project.id}">
+            <span>${escapeHtml(project.name)}</span>
+          </button>
+          <p class="project-chip-hint">Toque em Abrir para carregar os itens.</p>
+        </div>
         <div class="project-chip-actions">
           <small class="project-chip-count">${project.entryCount || 0} itens</small>
+          <button type="button" class="project-chip-open" data-open-project="${project.id}">Abrir</button>
           <button type="button" class="project-chip-delete" data-delete-project="${project.id}">Excluir</button>
         </div>
       </article>
@@ -567,7 +585,8 @@ async function loadProjectIntoForm(projectId) {
   renderCurrentProject();
   showProjectWorkspace();
   workspace.classList.remove("hidden");
-  workspace.scrollIntoView({ behavior: "smooth", block: "start" });
+  setProjectFeedback(`Projeto ${state.projectName} aberto. Os itens estao logo abaixo.`, false);
+  projectWorkspaceContent.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function renderCurrentProject() {
@@ -723,6 +742,42 @@ async function persistCurrentProject() {
   });
 
   state.projectId = project.id;
+  updateProjectCountLocally(project.id, state.entries.length);
+}
+
+function updateProjectCountLocally(projectId, entryCount) {
+  if (!projectId) {
+    return;
+  }
+
+  state.projects = state.projects.map((project) => (
+    project.id === projectId
+      ? { ...project, entryCount }
+      : project
+  ));
+  renderProjects();
+}
+
+function setProjectFeedback(message, isError = false) {
+  if (!message) {
+    projectFeedback.textContent = "";
+    projectFeedback.classList.add("hidden");
+    projectFeedback.classList.remove("login-feedback--success");
+    return;
+  }
+
+  projectFeedback.textContent = message;
+  projectFeedback.classList.remove("hidden");
+  projectFeedback.classList.toggle("login-feedback--success", !isError);
+}
+
+function setEntrySubmitState(isSaving) {
+  if (!entrySubmitButton) {
+    return;
+  }
+
+  entrySubmitButton.disabled = isSaving;
+  entrySubmitButton.textContent = isSaving ? "Salvando item..." : "Adicionar item";
 }
 
 async function handleDownload() {
