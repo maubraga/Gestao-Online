@@ -684,6 +684,13 @@ h3 {
   font-size: 0.78rem;
 }
 
+.receipt-limit-note {
+  margin-bottom: 12px;
+  color: var(--orange);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
 .action-row,
 .export-row,
 .camera-actions {

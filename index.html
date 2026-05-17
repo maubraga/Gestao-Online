@@ -221,7 +221,7 @@
                 <label class="field field-upload">
                   <span>Comprovantes</span>
                   <input id="entryReceipts" name="entryReceipts" type="file" accept="image/*,.pdf" multiple>
-                  <small>Use este campo para importar da galeria ou anexar PDF.</small>
+                  <small>Use este campo para importar da galeria ou anexar PDF. Limite total: 10 MB por item.</small>
                 </label>
               </div>
 
@@ -229,6 +229,7 @@
                 <button id="openCameraButton" class="ghost-button" type="button">Abrir camera</button>
               </div>
 
+              <p id="receiptFeedback" class="login-feedback hidden"></p>
               <div id="receiptPreview" class="receipt-preview empty">
                 <p>Nenhum comprovante selecionado.</p>
               </div>

@@ -1,6 +1,7 @@
 import ExcelJS from "https://cdn.jsdelivr.net/npm/exceljs@4.4.0/+esm";
 
 const AUTH_TOKEN_KEY = "gestao-gastos-auth-token";
+const MAX_RECEIPT_TOTAL_BYTES = 10 * 1024 * 1024;
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -49,6 +50,7 @@ const openProjectButton = document.querySelector("#openProjectButton");
 const projectWorkspaceContent = document.querySelector("#projectWorkspaceContent");
 const entryCategoryInput = document.querySelector("#entryCategory");
 const receiptInput = document.querySelector("#entryReceipts");
+const receiptFeedback = document.querySelector("#receiptFeedback");
 const receiptPreview = document.querySelector("#receiptPreview");
 const itemsList = document.querySelector("#itemsList");
 const totalValue = document.querySelector("#totalValue");
@@ -72,7 +74,7 @@ loginForm.addEventListener("submit", handleLoginSubmit);
 logoutButton.addEventListener("click", handleLogout);
 adminUserForm.addEventListener("submit", handleAdminUserSubmit);
 reportTypeInput.addEventListener("change", syncCategoryField);
-receiptInput.addEventListener("change", renderReceiptPreview);
+receiptInput.addEventListener("change", handleReceiptChange);
 reportSetupForm.addEventListener("submit", handleSetupSubmit);
 setupSubmitButton.addEventListener("click", handleSetupSubmit);
 openProjectButton.addEventListener("click", handleOpenProject);
@@ -343,7 +345,13 @@ async function handleEntrySubmit(event) {
 
   const formData = new FormData(entryForm);
   const value = Number(formData.get("entryValue") || 0);
-  const receipts = await filesToReceiptData(Array.from(receiptInput.files || []));
+  const selectedFiles = Array.from(receiptInput.files || []);
+  if (!validateReceiptFiles(selectedFiles)) {
+    renderReceiptPreview();
+    return;
+  }
+
+  const receipts = await filesToReceiptData(selectedFiles);
   const entry = {
     id: buildId(),
     date: String(formData.get("entryDate") || ""),
@@ -387,6 +395,7 @@ async function handleEntrySubmit(event) {
 function resetEntryForm() {
   entryForm.reset();
   syncCategoryField();
+  setReceiptFeedback("");
   renderReceiptPreview();
 }
 
@@ -642,7 +651,10 @@ function renderReceiptPreview() {
   }
 
   receiptPreview.className = "receipt-preview";
-  receiptPreview.innerHTML = files.map(renderReceiptPreviewItem).join("");
+  receiptPreview.innerHTML = `
+    <p class="receipt-limit-note">${files.length} arquivo(s) selecionado(s) | ${formatFileSize(sumReceiptBytes(files))} de ${formatFileSize(MAX_RECEIPT_TOTAL_BYTES)}</p>
+    ${files.map(renderReceiptPreviewItem).join("")}
+  `;
 }
 
 function clearPreviewUrls() {
@@ -1026,8 +1038,10 @@ async function openNativeCameraCapture() {
     input.addEventListener("change", () => {
       const files = Array.from(input.files || []);
       if (files.length) {
-        appendFilesToReceiptInput(files);
-        renderReceiptPreview();
+        const appended = appendFilesToReceiptInput(files);
+        if (appended) {
+          renderReceiptPreview();
+        }
       }
       resolve();
     }, { once: true });
@@ -1055,9 +1069,11 @@ async function capturePhoto() {
   const nativePhotoBlob = await captureNativePhotoBlob();
   if (nativePhotoBlob) {
     const file = new File([nativePhotoBlob], `comprovante-${Date.now()}.jpg`, { type: nativePhotoBlob.type || "image/jpeg" });
-    appendFilesToReceiptInput([file]);
-    renderReceiptPreview();
-    closeCamera();
+    const appended = appendFilesToReceiptInput([file]);
+    if (appended) {
+      renderReceiptPreview();
+      closeCamera();
+    }
     return;
   }
 
@@ -1080,9 +1096,11 @@ async function capturePhoto() {
   }
 
   const file = new File([blob], `comprovante-${Date.now()}.jpg`, { type: "image/jpeg" });
-  appendFilesToReceiptInput([file]);
-  renderReceiptPreview();
-  closeCamera();
+  const appended = appendFilesToReceiptInput([file]);
+  if (appended) {
+    renderReceiptPreview();
+    closeCamera();
+  }
 }
 
 async function optimizeCameraTrack(track) {
@@ -1175,10 +1193,16 @@ async function triggerDownload(buffer, fileName) {
 }
 
 function appendFilesToReceiptInput(files) {
+  const mergedFiles = [...Array.from(receiptInput.files || []), ...files];
+  if (!validateReceiptFiles(mergedFiles)) {
+    return false;
+  }
+
   const transfer = new DataTransfer();
-  Array.from(receiptInput.files || []).forEach((file) => transfer.items.add(file));
-  files.forEach((file) => transfer.items.add(file));
+  mergedFiles.forEach((file) => transfer.items.add(file));
   receiptInput.files = transfer.files;
+  setReceiptFeedback("");
+  return true;
 }
 
 async function filesToReceiptData(files) {
@@ -1197,6 +1221,44 @@ function fileToDataUrl(file) {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+}
+
+function handleReceiptChange() {
+  const files = Array.from(receiptInput.files || []);
+  if (!validateReceiptFiles(files)) {
+    receiptInput.value = "";
+  } else {
+    setReceiptFeedback("");
+  }
+
+  renderReceiptPreview();
+}
+
+function validateReceiptFiles(files) {
+  const totalBytes = sumReceiptBytes(files);
+  if (totalBytes <= MAX_RECEIPT_TOTAL_BYTES) {
+    return true;
+  }
+
+  setReceiptFeedback(`O total dos comprovantes passou de 10 MB. Remova alguns arquivos e tente novamente. (${formatFileSize(totalBytes)})`, true);
+  return false;
+}
+
+function sumReceiptBytes(files) {
+  return files.reduce((sum, file) => sum + Number(file.size || 0), 0);
+}
+
+function setReceiptFeedback(message, isError = true) {
+  if (!message) {
+    receiptFeedback.textContent = "";
+    receiptFeedback.classList.add("hidden");
+    receiptFeedback.classList.remove("login-feedback--success");
+    return;
+  }
+
+  receiptFeedback.textContent = message;
+  receiptFeedback.classList.remove("hidden");
+  receiptFeedback.classList.toggle("login-feedback--success", !isError);
 }
 
 async function api(url, options = {}) {
