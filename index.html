@@ -58,7 +58,7 @@
       </section>
 
       <div id="appContent" class="hidden">
-        <section class="hero-card hero-card-compact">
+        <section id="setupScreen" class="hero-card hero-card-compact">
           <header class="setup-hero">
             <div class="setup-hero__logo">
               <img src="/assets/branding/logo.png" alt="Logo Gestao de Gastos">
@@ -118,7 +118,14 @@
         </section>
 
         <section id="workspace" class="workspace hidden" aria-live="polite">
-          <article id="adminPanel" class="panel panel-setup hidden">
+          <div id="projectsScreen" class="screen-stack hidden">
+            <div class="screen-toolbar">
+              <button id="backToSetupButton" class="ghost-button screen-toolbar__button" type="button">Voltar</button>
+              <button id="projectsLogoutButton" class="ghost-button screen-toolbar__button" type="button">Sair</button>
+            </div>
+
+            <div id="projectsDirectory" class="screen-stack">
+              <article id="adminPanel" class="panel panel-setup hidden">
             <div class="panel-heading">
               <div>
                 <p class="eyebrow">Admin</p>
@@ -149,23 +156,30 @@
             <div id="adminUsersList" class="saved-projects empty">
               <p>Nenhum usuario cadastrado.</p>
             </div>
-          </article>
+              </article>
 
-          <article class="panel saved-projects-panel">
-            <div class="panel-heading">
-              <div>
-                <p class="eyebrow">Projetos</p>
-                <h2>Projetos salvos</h2>
-                <p class="panel-hint">Use o botao Abrir para carregar os itens do projeto.</p>
-              </div>
+              <article class="panel saved-projects-panel">
+                <div class="panel-heading">
+                  <div>
+                    <p class="eyebrow">Projetos</p>
+                    <h2>Projetos salvos</h2>
+                    <p class="panel-hint">Use o botao Abrir para carregar os itens do projeto.</p>
+                  </div>
+                </div>
+                <p id="projectFeedback" class="login-feedback login-feedback--success hidden"></p>
+                <div id="projectList" class="saved-projects empty">
+                  <p>Nenhum projeto salvo.</p>
+                </div>
+              </article>
             </div>
-            <p id="projectFeedback" class="login-feedback login-feedback--success hidden"></p>
-            <div id="projectList" class="saved-projects empty">
-              <p>Nenhum projeto salvo.</p>
-            </div>
-          </article>
+          </div>
 
           <div id="projectWorkspaceContent" class="project-workspace hidden">
+            <div class="screen-toolbar">
+              <button id="backToProjectsButton" class="ghost-button screen-toolbar__button" type="button">Voltar</button>
+              <button id="detailLogoutButton" class="ghost-button screen-toolbar__button" type="button">Sair</button>
+            </div>
+
             <article class="panel summary-panel">
               <div class="summary-chip">
                 <p class="summary-label">Usuario</p>

@@ -80,6 +80,11 @@ button {
   gap: 14px;
 }
 
+.screen-stack {
+  display: grid;
+  gap: 14px;
+}
+
 .project-workspace {
   display: grid;
   gap: 14px;
@@ -697,6 +702,16 @@ h3 {
   display: flex;
   gap: 12px;
   margin-top: 18px;
+}
+
+.screen-toolbar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.screen-toolbar__button {
+  min-height: 48px;
 }
 
 .setup-actions {

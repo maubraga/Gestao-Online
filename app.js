@@ -23,6 +23,9 @@ const state = {
 
 const loginScreen = document.querySelector("#loginScreen");
 const appContent = document.querySelector("#appContent");
+const setupScreen = document.querySelector("#setupScreen");
+const projectsScreen = document.querySelector("#projectsScreen");
+const projectsDirectory = document.querySelector("#projectsDirectory");
 const loginForm = document.querySelector("#loginForm");
 const loginUsernameInput = document.querySelector("#loginUsername");
 const loginPasswordInput = document.querySelector("#loginPassword");
@@ -48,6 +51,10 @@ const reportTypeInput = document.querySelector("#reportType");
 const setupSubmitButton = document.querySelector("#setupSubmitButton");
 const openProjectButton = document.querySelector("#openProjectButton");
 const projectWorkspaceContent = document.querySelector("#projectWorkspaceContent");
+const backToSetupButton = document.querySelector("#backToSetupButton");
+const backToProjectsButton = document.querySelector("#backToProjectsButton");
+const projectsLogoutButton = document.querySelector("#projectsLogoutButton");
+const detailLogoutButton = document.querySelector("#detailLogoutButton");
 const entryCategoryInput = document.querySelector("#entryCategory");
 const receiptInput = document.querySelector("#entryReceipts");
 const receiptFeedback = document.querySelector("#receiptFeedback");
@@ -82,6 +89,10 @@ entryForm.addEventListener("submit", handleEntrySubmit);
 clearEntryButton.addEventListener("click", resetEntryForm);
 changeSetupButton.addEventListener("click", showSetup);
 downloadButton.addEventListener("click", handleDownload);
+backToSetupButton.addEventListener("click", showSetupScreen);
+backToProjectsButton.addEventListener("click", showProjectsScreen);
+projectsLogoutButton.addEventListener("click", handleLogout);
+detailLogoutButton.addEventListener("click", handleLogout);
 openCameraButton.addEventListener("click", openCamera);
 closeCameraButton.addEventListener("click", closeCamera);
 capturePhotoButton.addEventListener("click", capturePhoto);
@@ -153,7 +164,7 @@ async function bootAuthenticatedApp() {
   sessionUserLabel.textContent = `Conta ativa: ${state.authUser?.displayName || state.authUser?.username || "-"}`;
   showAppScreen();
   syncAdminPanel();
-  showWorkspaceList();
+  showSetupScreen();
   await refreshProjects();
   if (state.authUser?.isAdmin) {
     await refreshAdminUsers();
@@ -196,6 +207,34 @@ function showLoginScreen() {
 function showAppScreen() {
   loginScreen.classList.add("hidden");
   appContent.classList.remove("hidden");
+}
+
+function showSetupScreen() {
+  workspace.classList.add("hidden");
+  setupScreen.classList.remove("hidden");
+  hideProjectWorkspace();
+  projectsScreen.classList.add("hidden");
+  projectsDirectory.classList.remove("hidden");
+  openProjectButton.classList.remove("hidden");
+  setupScreen.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function showProjectsScreen() {
+  setupScreen.classList.add("hidden");
+  workspace.classList.remove("hidden");
+  projectsScreen.classList.remove("hidden");
+  projectsDirectory.classList.remove("hidden");
+  hideProjectWorkspace();
+  workspace.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function showProjectDetailScreen() {
+  setupScreen.classList.add("hidden");
+  workspace.classList.remove("hidden");
+  projectsScreen.classList.add("hidden");
+  projectsDirectory.classList.add("hidden");
+  projectWorkspaceContent.classList.remove("hidden");
+  projectWorkspaceContent.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function syncAdminPanel() {
@@ -293,7 +332,7 @@ async function handleSetupSubmit(event) {
       renderCurrentProject();
       syncSetupButtonLabel();
       openProjectButton.classList.remove("hidden");
-      showWorkspaceList();
+      showProjectsScreen();
       return;
     }
 
@@ -324,7 +363,7 @@ async function handleSetupSubmit(event) {
     projectNameInput.value = project.name;
     reportTypeInput.value = project.reportType || nextReportType;
     syncCategoryField();
-    showWorkspaceList();
+    showProjectsScreen();
   } catch (error) {
     console.error(error);
     window.alert(`Nao foi possivel salvar o projeto. ${error?.message || ""}`.trim());
@@ -332,7 +371,7 @@ async function handleSetupSubmit(event) {
 }
 
 function handleOpenProject() {
-  showWorkspaceList();
+  showProjectsScreen();
 }
 
 async function handleEntrySubmit(event) {
@@ -400,7 +439,7 @@ function resetEntryForm() {
 }
 
 function showSetup() {
-  workspace.classList.add("hidden");
+  showSetupScreen();
   state.isEditingSetup = true;
   syncSetupButtonLabel(true);
   openProjectButton.classList.add("hidden");
@@ -592,10 +631,8 @@ async function loadProjectIntoForm(projectId) {
   syncSetupButtonLabel();
   openProjectButton.classList.remove("hidden");
   renderCurrentProject();
-  showProjectWorkspace();
-  workspace.classList.remove("hidden");
+  showProjectDetailScreen();
   setProjectFeedback(`Projeto ${state.projectName} aberto. Os itens estao logo abaixo.`, false);
-  projectWorkspaceContent.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function renderCurrentProject() {
@@ -620,6 +657,9 @@ function clearCurrentProjectState() {
   openProjectButton.classList.remove("hidden");
   hideProjectWorkspace();
   workspace.classList.add("hidden");
+  projectsScreen.classList.add("hidden");
+  projectsDirectory.classList.remove("hidden");
+  setupScreen.classList.remove("hidden");
 }
 
 function syncSetupButtonLabel(forceEdit = false) {
@@ -627,13 +667,11 @@ function syncSetupButtonLabel(forceEdit = false) {
 }
 
 function showWorkspaceList() {
-  workspace.classList.remove("hidden");
-  hideProjectWorkspace();
-  workspace.scrollIntoView({ behavior: "smooth", block: "start" });
+  showProjectsScreen();
 }
 
 function showProjectWorkspace() {
-  projectWorkspaceContent.classList.remove("hidden");
+  showProjectDetailScreen();
 }
 
 function hideProjectWorkspace() {
