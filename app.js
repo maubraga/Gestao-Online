@@ -2,8 +2,8 @@ import ExcelJS from "https://cdn.jsdelivr.net/npm/exceljs@4.4.0/+esm";
 
 const AUTH_TOKEN_KEY = "gestao-gastos-auth-token";
 const MAX_RECEIPT_TOTAL_BYTES = 10 * 1024 * 1024;
-const MAX_RECEIPT_IMAGE_DIMENSION = 1600;
-const RECEIPT_IMAGE_QUALITY = 0.72;
+const MAX_RECEIPT_IMAGE_DIMENSION = 1280;
+const RECEIPT_IMAGE_QUALITY = 0.62;
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -179,7 +179,6 @@ async function bootAuthenticatedApp() {
   syncAdminPanel();
   showSetupScreen();
   await refreshProjects();
-  await preloadProjectCache();
   if (state.authUser?.isAdmin) {
     await refreshAdminUsers();
   }
@@ -450,9 +449,6 @@ async function handleEntrySubmit(event) {
 
     await persistCurrentProject();
     setEntryFeedback("Item salvo com sucesso.", false);
-    refreshProjects().then(() => preloadProjectCache()).catch((error) => {
-      console.error(error);
-    });
   } catch (error) {
     console.error(error);
     if (optimisticEntryId) {
@@ -491,42 +487,6 @@ function syncCategoryField() {
 async function refreshProjects() {
   state.projects = await state.storage.listProjects();
   renderProjects();
-}
-
-async function preloadProjectCache() {
-  if (!state.projects.length) {
-    return;
-  }
-
-  setAppLoading(true, "Preparando projetos salvos...");
-
-  try {
-    const details = await Promise.all(state.projects.map(async (project) => {
-      if (state.projectCache.has(project.id)) {
-        return state.projectCache.get(project.id);
-      }
-
-      try {
-        return await state.storage.getProject(project.id);
-      } catch (error) {
-        console.error(error);
-        return null;
-      }
-    }));
-
-    details.filter(Boolean).forEach((project) => {
-      state.projectCache.set(project.id, project);
-    });
-    state.projects = state.projects.map((project) => {
-      const cachedProject = state.projectCache.get(project.id);
-      return cachedProject
-        ? { ...project, entryCount: Array.isArray(cachedProject.entries) ? cachedProject.entries.length : 0 }
-        : project;
-    });
-    renderProjects();
-  } finally {
-    setAppLoading(false);
-  }
 }
 
 async function refreshAdminUsers() {
@@ -1359,7 +1319,7 @@ function fileToDataUrl(file) {
 
 async function fileToDataUrlForUpload(file) {
   if (!String(file.type || "").startsWith("image/")) {
-    return fileToDataUrl(file);
+    return "";
   }
 
   return compressImageFile(file);

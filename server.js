@@ -745,15 +745,7 @@ async function handleProjectsApi(req, res, url, user) {
 
     if (req.method === "PUT" && parts.length === 3) {
       const body = await readBody(req);
-      const existingProject = await getProjectRemote(user.username, projectId);
-
-      if (!existingProject) {
-        sendJson(res, 404, { error: "Projeto nao encontrado." });
-        return true;
-      }
-
       const savedProject = await saveProjectRemote(user.username, {
-        ...existingProject,
         ...body,
         id: projectId,
       });
