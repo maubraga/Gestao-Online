@@ -580,7 +580,7 @@ async function hydrateProjectReceipts(project) {
 async function listProjectSummariesRemote(username) {
   const { data, error } = await supabase
     .from("projects")
-    .select("id,name,user_name,report_type,updated_at")
+    .select("id,name,user_name,report_type,entries,updated_at")
     .eq("owner_username", username)
     .order("updated_at", { ascending: false });
 
@@ -588,14 +588,14 @@ async function listProjectSummariesRemote(username) {
     throw new Error(`Falha ao listar projetos no Supabase: ${error.message}`);
   }
 
-  return (data || []).map((project) => buildProjectSummary(sanitizeProjectRecord({
-    id: project.id,
-    name: project.name,
-    userName: project.user_name,
-    reportType: project.report_type,
-    entries: [],
-    updatedAt: project.updated_at,
-  })));
+    return (data || []).map((project) => buildProjectSummary(sanitizeProjectRecord({
+      id: project.id,
+      name: project.name,
+      userName: project.user_name,
+      reportType: project.report_type,
+      entries: project.entries,
+      updatedAt: project.updated_at,
+    })));
 }
 
 async function getProjectRemote(username, projectId, includeReceiptData = false) {
