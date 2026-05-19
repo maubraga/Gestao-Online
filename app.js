@@ -895,6 +895,7 @@ async function handleDownload() {
   downloadButton.textContent = "Gerando planilha...";
 
   try {
+    await ensureReceiptsForExport();
     const workbook = await loadWorkbookTemplate();
     buildMainSheet(workbook);
     removeUnusedSheets(workbook);
@@ -1350,6 +1351,43 @@ async function compressImageFile(file) {
     });
   } finally {
     URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function ensureReceiptsForExport() {
+  const missingPaths = [];
+
+  for (const entry of state.entries) {
+    for (const receipt of entry.receipts || []) {
+      if (receipt.storagePath && !receipt.dataUrl) {
+        missingPaths.push(receipt.storagePath);
+      }
+    }
+  }
+
+  if (!missingPaths.length) {
+    return;
+  }
+
+  setAppLoading(true, "Carregando comprovantes...");
+
+  try {
+    const payload = await api("/api/receipts/content", {
+      method: "POST",
+      body: { paths: missingPaths },
+    });
+
+    const receiptMap = payload.receipts || {};
+    state.entries = state.entries.map((entry) => ({
+      ...entry,
+      receipts: (entry.receipts || []).map((receipt) => (
+        receipt.storagePath && receiptMap[receipt.storagePath]
+          ? { ...receipt, dataUrl: receiptMap[receipt.storagePath] }
+          : receipt
+      )),
+    }));
+  } finally {
+    setAppLoading(false);
   }
 }
 

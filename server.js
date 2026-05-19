@@ -16,6 +16,7 @@ const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const USE_SUPABASE = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
+const RECEIPTS_BUCKET = "gestao-receipts";
 const supabase = USE_SUPABASE
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
@@ -52,6 +53,8 @@ const MIME_TYPES = {
   ".webmanifest": "application/manifest+json; charset=utf-8",
   ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
+
+let receiptsBucketReady = false;
 
 function send(res, status, body, type = "text/plain; charset=utf-8", extraHeaders = {}) {
   res.writeHead(status, {
@@ -134,6 +137,7 @@ function sanitizeEntry(entry, fallbackProject, fallbackType) {
       type: String(receipt?.type || "arquivo"),
       size: Number(receipt?.size || 0),
       dataUrl: String(receipt?.dataUrl || ""),
+      storagePath: String(receipt?.storagePath || ""),
     })) : [],
   };
 }
@@ -410,6 +414,169 @@ async function writeProjectsDb(username, db) {
   await writeProjectsDbRemote(username, db);
 }
 
+async function ensureReceiptsBucket() {
+  if (!USE_SUPABASE || receiptsBucketReady) {
+    return;
+  }
+
+  const { data, error } = await supabase.storage.listBuckets();
+  if (error) {
+    throw new Error(`Falha ao listar buckets: ${error.message}`);
+  }
+
+  const exists = (data || []).some((bucket) => bucket.name === RECEIPTS_BUCKET);
+  if (!exists) {
+    const { error: createError } = await supabase.storage.createBucket(RECEIPTS_BUCKET, {
+      public: false,
+      fileSizeLimit: "15MB",
+    });
+
+    if (createError) {
+      throw new Error(`Falha ao criar bucket de comprovantes: ${createError.message}`);
+    }
+  }
+
+  receiptsBucketReady = true;
+}
+
+function detectReceiptExtension(receipt) {
+  const name = String(receipt?.name || "").toLowerCase();
+  const type = String(receipt?.type || "").toLowerCase();
+
+  if (name.endsWith(".png") || type.includes("png")) return "png";
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg") || type.includes("jpeg") || type.includes("jpg")) return "jpg";
+  if (name.endsWith(".gif") || type.includes("gif")) return "gif";
+  if (name.endsWith(".pdf") || type.includes("pdf")) return "pdf";
+  return "bin";
+}
+
+function dataUrlToBuffer(dataUrl) {
+  const match = String(dataUrl || "").match(/^data:(.+?);base64,(.+)$/);
+  if (!match) {
+    throw new Error("Data URL invalida para comprovante.");
+  }
+
+  return {
+    mimeType: match[1],
+    buffer: Buffer.from(match[2], "base64"),
+  };
+}
+
+function buildReceiptStoragePath(username, projectId, entryId, index, receipt) {
+  const extension = detectReceiptExtension(receipt);
+  return `${slugify(username)}/${slugify(projectId)}/${slugify(entryId)}/${index}.${extension}`;
+}
+
+async function persistReceiptsForProject(username, project) {
+  await ensureReceiptsBucket();
+
+  const nextEntries = [];
+  for (const entry of project.entries) {
+    const nextReceipts = [];
+
+    for (let index = 0; index < entry.receipts.length; index += 1) {
+      const receipt = entry.receipts[index];
+
+      if (receipt.storagePath) {
+        nextReceipts.push({
+          name: receipt.name,
+          type: receipt.type,
+          size: receipt.size,
+          dataUrl: "",
+          storagePath: receipt.storagePath,
+        });
+        continue;
+      }
+
+      if (!receipt.dataUrl) {
+        nextReceipts.push({
+          name: receipt.name,
+          type: receipt.type,
+          size: receipt.size,
+          dataUrl: "",
+          storagePath: "",
+        });
+        continue;
+      }
+
+      const { mimeType, buffer } = dataUrlToBuffer(receipt.dataUrl);
+      const storagePath = buildReceiptStoragePath(username, project.id, entry.id, index, receipt);
+      const { error } = await supabase.storage
+        .from(RECEIPTS_BUCKET)
+        .upload(storagePath, buffer, {
+          contentType: mimeType,
+          upsert: true,
+        });
+
+      if (error) {
+        throw new Error(`Falha ao salvar comprovante: ${error.message}`);
+      }
+
+      nextReceipts.push({
+        name: receipt.name,
+        type: receipt.type || mimeType,
+        size: receipt.size || buffer.length,
+        dataUrl: "",
+        storagePath,
+      });
+    }
+
+    nextEntries.push({
+      ...entry,
+      receipts: nextReceipts,
+    });
+  }
+
+  return nextEntries;
+}
+
+async function buildReceiptDataUrl(storagePath) {
+  await ensureReceiptsBucket();
+
+  const { data, error } = await supabase.storage
+    .from(RECEIPTS_BUCKET)
+    .download(storagePath);
+
+  if (error) {
+    throw new Error(`Falha ao baixar comprovante: ${error.message}`);
+  }
+
+  const arrayBuffer = await data.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  const mimeType = data.type || "application/octet-stream";
+  return `data:${mimeType};base64,${buffer.toString("base64")}`;
+}
+
+async function hydrateProjectReceipts(project) {
+  const nextEntries = [];
+
+  for (const entry of project.entries) {
+    const nextReceipts = [];
+
+    for (const receipt of entry.receipts) {
+      if (!receipt.storagePath) {
+        nextReceipts.push(receipt);
+        continue;
+      }
+
+      nextReceipts.push({
+        ...receipt,
+        dataUrl: await buildReceiptDataUrl(receipt.storagePath),
+      });
+    }
+
+    nextEntries.push({
+      ...entry,
+      receipts: nextReceipts,
+    });
+  }
+
+  return {
+    ...project,
+    entries: nextEntries,
+  };
+}
+
 async function listProjectSummariesRemote(username) {
   const { data, error } = await supabase
     .from("projects")
@@ -431,7 +598,7 @@ async function listProjectSummariesRemote(username) {
   })));
 }
 
-async function getProjectRemote(username, projectId) {
+async function getProjectRemote(username, projectId, includeReceiptData = false) {
   const { data, error } = await supabase
     .from("projects")
     .select("id,name,user_name,report_type,entries,updated_at")
@@ -447,7 +614,7 @@ async function getProjectRemote(username, projectId) {
     return null;
   }
 
-  return sanitizeProjectRecord({
+  const project = sanitizeProjectRecord({
     id: data.id,
     name: data.name,
     userName: data.user_name,
@@ -455,6 +622,12 @@ async function getProjectRemote(username, projectId) {
     entries: data.entries,
     updatedAt: data.updated_at,
   });
+
+  if (!includeReceiptData) {
+    return project;
+  }
+
+  return hydrateProjectReceipts(project);
 }
 
 async function saveProjectRemote(username, project) {
@@ -462,6 +635,7 @@ async function saveProjectRemote(username, project) {
     ...project,
     updatedAt: new Date().toISOString(),
   });
+  nextProject.entries = await persistReceiptsForProject(username, nextProject);
 
   const payload = {
     id: nextProject.id,
@@ -717,8 +891,8 @@ async function handleProjectsApi(req, res, url, user) {
       return true;
     }
 
-    if (req.method === "GET" && parts.length === 3) {
-      const project = await getProjectRemote(user.username, projectId);
+      if (req.method === "GET" && parts.length === 3) {
+      const project = await getProjectRemote(user.username, projectId, url.searchParams.get("includeReceiptData") === "1");
 
       if (!project) {
         sendJson(res, 404, { error: "Projeto nao encontrado." });
@@ -855,6 +1029,28 @@ async function handleProjectsApi(req, res, url, user) {
   return false;
 }
 
+async function handleReceiptsApi(req, res, user) {
+  if (req.method !== "POST") {
+    return false;
+  }
+
+  const body = await readBody(req);
+  const paths = Array.isArray(body.paths) ? body.paths : [];
+  const receipts = {};
+
+  for (const pathValue of paths) {
+    const path = String(pathValue || "");
+    if (!path || !path.startsWith(`${slugify(user.username)}/`)) {
+      continue;
+    }
+
+    receipts[path] = await buildReceiptDataUrl(path);
+  }
+
+  sendJson(res, 200, { receipts });
+  return true;
+}
+
 async function serveStatic(req, res, url) {
   const relativePath = url.pathname === "/" ? "/index.html" : url.pathname;
   const decodedPath = decodeURIComponent(relativePath);
@@ -905,7 +1101,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (url.pathname === "/api/admin/users") {
+      if (url.pathname === "/api/admin/users") {
       const user = await getAuthenticatedUser(req);
       if (!user) {
         sendJson(res, 401, { error: "Acesso nao autorizado." });
@@ -917,9 +1113,23 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 404, { error: "Rota nao encontrada." });
       }
       return;
-    }
+      }
 
-    if (url.pathname.startsWith("/api/projects")) {
+      if (url.pathname === "/api/receipts/content") {
+        const user = await getAuthenticatedUser(req);
+        if (!user) {
+          sendJson(res, 401, { error: "Acesso nao autorizado." });
+          return;
+        }
+
+        const handled = await handleReceiptsApi(req, res, user);
+        if (!handled) {
+          sendJson(res, 404, { error: "Rota nao encontrada." });
+        }
+        return;
+      }
+
+      if (url.pathname.startsWith("/api/projects")) {
       const user = await getAuthenticatedUser(req);
       if (!user) {
         sendJson(res, 401, { error: "Acesso nao autorizado." });
