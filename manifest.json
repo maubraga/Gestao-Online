@@ -1,11 +1,11 @@
 {
-  "name": "Gestao de Gastos Native",
-  "short_name": "Gastos Native",
+  "name": "Gestao de Gastos",
+  "short_name": "Gestao",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#08111f",
   "theme_color": "#08111f",
-  "description": "Controle mobile de relatorios de reembolso, prestacao de contas e KM.",
+  "description": "App mobile-first para relatorios de despesas, prestacao de contas, reembolso e km.",
   "lang": "pt-BR",
   "icons": [
     {
