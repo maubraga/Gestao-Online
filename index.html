@@ -13,6 +13,13 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+  <div id="appLoader" class="app-loader hidden" aria-live="polite" aria-hidden="true">
+    <div class="app-loader__panel">
+      <span class="app-loader__spinner" aria-hidden="true"></span>
+      <p id="appLoaderText">Carregando...</p>
+    </div>
+  </div>
+
   <main class="app-shell">
     <div class="app-device">
       <section id="loginScreen" class="hero-card hero-card-compact">
@@ -125,37 +132,41 @@
             </div>
 
             <div id="projectsDirectory" class="screen-stack">
+              <div id="adminToggleWrap" class="hidden">
+                <button id="adminToggleButton" class="ghost-button" type="button">Usuarios</button>
+              </div>
+
               <article id="adminPanel" class="panel panel-setup hidden">
-            <div class="panel-heading">
-              <div>
-                <p class="eyebrow">Admin</p>
-                <h2>Usuarios do sistema</h2>
-              </div>
-            </div>
+                <div class="panel-heading">
+                  <div>
+                    <p class="eyebrow">Admin</p>
+                    <h2>Usuarios do sistema</h2>
+                  </div>
+                </div>
 
-            <form id="adminUserForm" class="setup-form">
-              <div class="grid-form">
-                <label class="field">
-                  <span>Novo usuario</span>
-                  <input id="adminNewUsername" name="adminNewUsername" type="text" maxlength="40" placeholder="Digite o usuario" required>
-                </label>
+                <form id="adminUserForm" class="setup-form">
+                  <div class="grid-form">
+                    <label class="field">
+                      <span>Novo usuario</span>
+                      <input id="adminNewUsername" name="adminNewUsername" type="text" maxlength="40" placeholder="Digite o usuario" required>
+                    </label>
 
-                <label class="field">
-                  <span>Senha</span>
-                  <input id="adminNewPassword" name="adminNewPassword" type="text" maxlength="80" placeholder="Digite a senha" required>
-                </label>
-              </div>
+                    <label class="field">
+                      <span>Senha</span>
+                      <input id="adminNewPassword" name="adminNewPassword" type="text" maxlength="80" placeholder="Digite a senha" required>
+                    </label>
+                  </div>
 
-              <div class="action-row">
-                <button id="adminCreateUserButton" class="primary-button" type="submit">Adicionar usuario</button>
-              </div>
-            </form>
+                  <div class="action-row">
+                    <button id="adminCreateUserButton" class="primary-button" type="submit">Adicionar usuario</button>
+                  </div>
+                </form>
 
-            <p id="adminFeedback" class="login-feedback hidden"></p>
+                <p id="adminFeedback" class="login-feedback hidden"></p>
 
-            <div id="adminUsersList" class="saved-projects empty">
-              <p>Nenhum usuario cadastrado.</p>
-            </div>
+                <div id="adminUsersList" class="saved-projects empty">
+                  <p>Nenhum usuario cadastrado.</p>
+                </div>
               </article>
 
               <article class="panel saved-projects-panel">
@@ -244,6 +255,7 @@
               </div>
 
               <p id="receiptFeedback" class="login-feedback hidden"></p>
+              <p id="entryFeedback" class="login-feedback hidden"></p>
               <div id="receiptPreview" class="receipt-preview empty">
                 <p>Nenhum comprovante selecionado.</p>
               </div>

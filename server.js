@@ -336,14 +336,7 @@ async function writeAccountsDb(db) {
 }
 
 async function ensureUserProjectsFileRemote(username) {
-  if (!USE_SUPABASE) {
-    return;
-  }
-
-  const db = await readProjectsDbRemote(username);
-  if (!Array.isArray(db.projects)) {
-    throw new Error("Falha ao preparar base remota do usuario.");
-  }
+  void username;
 }
 
 async function readProjectsDbRemote(username) {
@@ -415,6 +408,108 @@ async function writeProjectsDb(username, db) {
   }
 
   await writeProjectsDbRemote(username, db);
+}
+
+async function listProjectSummariesRemote(username) {
+  const { data, error } = await supabase
+    .from("projects")
+    .select("id,name,user_name,report_type,updated_at")
+    .eq("owner_username", username)
+    .order("updated_at", { ascending: false });
+
+  if (error) {
+    throw new Error(`Falha ao listar projetos no Supabase: ${error.message}`);
+  }
+
+  return (data || []).map((project) => buildProjectSummary(sanitizeProjectRecord({
+    id: project.id,
+    name: project.name,
+    userName: project.user_name,
+    reportType: project.report_type,
+    entries: [],
+    updatedAt: project.updated_at,
+  })));
+}
+
+async function getProjectRemote(username, projectId) {
+  const { data, error } = await supabase
+    .from("projects")
+    .select("id,name,user_name,report_type,entries,updated_at")
+    .eq("owner_username", username)
+    .eq("id", projectId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Falha ao abrir projeto no Supabase: ${error.message}`);
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return sanitizeProjectRecord({
+    id: data.id,
+    name: data.name,
+    userName: data.user_name,
+    reportType: data.report_type,
+    entries: data.entries,
+    updatedAt: data.updated_at,
+  });
+}
+
+async function saveProjectRemote(username, project) {
+  const nextProject = sanitizeProjectRecord({
+    ...project,
+    updatedAt: new Date().toISOString(),
+  });
+
+  const payload = {
+    id: nextProject.id,
+    owner_username: username,
+    name: nextProject.name,
+    user_name: nextProject.userName,
+    report_type: nextProject.reportType,
+    entries: nextProject.entries,
+    updated_at: nextProject.updatedAt,
+  };
+
+  const { data: updatedRows, error: updateError } = await supabase
+    .from("projects")
+    .update(payload)
+    .eq("owner_username", username)
+    .eq("id", nextProject.id)
+    .select("id");
+
+  if (updateError) {
+    throw new Error(`Falha ao atualizar projeto no Supabase: ${updateError.message}`);
+  }
+
+  if (!updatedRows || !updatedRows.length) {
+    const { error: insertError } = await supabase
+      .from("projects")
+      .insert(payload);
+
+    if (insertError) {
+      throw new Error(`Falha ao gravar projeto no Supabase: ${insertError.message}`);
+    }
+  }
+
+  return nextProject;
+}
+
+async function deleteProjectRemote(username, projectId) {
+  const { data, error } = await supabase
+    .from("projects")
+    .delete()
+    .eq("owner_username", username)
+    .eq("id", projectId)
+    .select("id");
+
+  if (error) {
+    throw new Error(`Falha ao excluir projeto no Supabase: ${error.message}`);
+  }
+
+  return Boolean(data && data.length);
 }
 
 async function readBody(req) {
@@ -614,6 +709,71 @@ async function handleAdminUsersApi(req, res, user) {
 async function handleProjectsApi(req, res, url, user) {
   const parts = url.pathname.split("/").filter(Boolean);
   const projectId = parts[2] ? decodeURIComponent(parts[2]) : "";
+
+  if (USE_SUPABASE) {
+    if (req.method === "GET" && parts.length === 2) {
+      const projects = await listProjectSummariesRemote(user.username);
+      sendJson(res, 200, { projects });
+      return true;
+    }
+
+    if (req.method === "GET" && parts.length === 3) {
+      const project = await getProjectRemote(user.username, projectId);
+
+      if (!project) {
+        sendJson(res, 404, { error: "Projeto nao encontrado." });
+        return true;
+      }
+
+      sendJson(res, 200, { project });
+      return true;
+    }
+
+    if (req.method === "POST" && parts.length === 2) {
+      const body = await readBody(req);
+      const project = sanitizeProjectRecord(body);
+
+      if (!isValidProject(project)) {
+        sendJson(res, 400, { error: "Projeto invalido." });
+        return true;
+      }
+
+      const savedProject = await saveProjectRemote(user.username, project);
+      sendJson(res, 200, { project: savedProject });
+      return true;
+    }
+
+    if (req.method === "PUT" && parts.length === 3) {
+      const body = await readBody(req);
+      const existingProject = await getProjectRemote(user.username, projectId);
+
+      if (!existingProject) {
+        sendJson(res, 404, { error: "Projeto nao encontrado." });
+        return true;
+      }
+
+      const savedProject = await saveProjectRemote(user.username, {
+        ...existingProject,
+        ...body,
+        id: projectId,
+      });
+
+      sendJson(res, 200, { project: savedProject });
+      return true;
+    }
+
+    if (req.method === "DELETE" && parts.length === 3) {
+      const removed = await deleteProjectRemote(user.username, projectId);
+
+      if (!removed) {
+        sendJson(res, 404, { error: "Projeto nao encontrado." });
+        return true;
+      }
+
+      sendJson(res, 200, { ok: true });
+      return true;
+    }
+  }
 
   if (req.method === "GET" && parts.length === 2) {
     const db = await readProjectsDb(user.username);

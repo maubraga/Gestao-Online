@@ -2,6 +2,8 @@ import ExcelJS from "https://cdn.jsdelivr.net/npm/exceljs@4.4.0/+esm";
 
 const AUTH_TOKEN_KEY = "gestao-gastos-auth-token";
 const MAX_RECEIPT_TOTAL_BYTES = 10 * 1024 * 1024;
+const MAX_RECEIPT_IMAGE_DIMENSION = 1600;
+const RECEIPT_IMAGE_QUALITY = 0.72;
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -18,9 +20,12 @@ const state = {
   isEditingSetup: false,
   projects: [],
   entries: [],
+  projectCache: new Map(),
   storage: null,
 };
 
+const appLoader = document.querySelector("#appLoader");
+const appLoaderText = document.querySelector("#appLoaderText");
 const loginScreen = document.querySelector("#loginScreen");
 const appContent = document.querySelector("#appContent");
 const setupScreen = document.querySelector("#setupScreen");
@@ -33,6 +38,8 @@ const loginButton = document.querySelector("#loginButton");
 const loginFeedback = document.querySelector("#loginFeedback");
 const sessionUserLabel = document.querySelector("#sessionUserLabel");
 const logoutButton = document.querySelector("#logoutButton");
+const adminToggleWrap = document.querySelector("#adminToggleWrap");
+const adminToggleButton = document.querySelector("#adminToggleButton");
 const adminPanel = document.querySelector("#adminPanel");
 const adminUserForm = document.querySelector("#adminUserForm");
 const adminNewUsernameInput = document.querySelector("#adminNewUsername");
@@ -58,6 +65,7 @@ const detailLogoutButton = document.querySelector("#detailLogoutButton");
 const entryCategoryInput = document.querySelector("#entryCategory");
 const receiptInput = document.querySelector("#entryReceipts");
 const receiptFeedback = document.querySelector("#receiptFeedback");
+const entryFeedback = document.querySelector("#entryFeedback");
 const receiptPreview = document.querySelector("#receiptPreview");
 const itemsList = document.querySelector("#itemsList");
 const totalValue = document.querySelector("#totalValue");
@@ -79,6 +87,7 @@ let cameraStream = null;
 
 loginForm.addEventListener("submit", handleLoginSubmit);
 logoutButton.addEventListener("click", handleLogout);
+adminToggleButton.addEventListener("click", toggleAdminPanel);
 adminUserForm.addEventListener("submit", handleAdminUserSubmit);
 reportTypeInput.addEventListener("change", syncCategoryField);
 receiptInput.addEventListener("change", handleReceiptChange);
@@ -136,6 +145,7 @@ async function handleLoginSubmit(event) {
 
   loginButton.disabled = true;
   setLoginFeedback("");
+  setAppLoading(true, "Entrando...");
 
   try {
     const payload = await api("/api/login", {
@@ -153,12 +163,15 @@ async function handleLoginSubmit(event) {
     setLoginFeedback(error?.message || "Nao foi possivel entrar.");
   } finally {
     loginButton.disabled = false;
+    setAppLoading(false);
   }
 }
 
 async function bootAuthenticatedApp() {
+  setAppLoading(true, "Carregando projetos...");
   clearCurrentProjectState();
   state.projects = [];
+  state.projectCache = new Map();
   renderProjects();
   state.storage = createRemoteStorage();
   sessionUserLabel.textContent = `Conta ativa: ${state.authUser?.displayName || state.authUser?.username || "-"}`;
@@ -166,15 +179,19 @@ async function bootAuthenticatedApp() {
   syncAdminPanel();
   showSetupScreen();
   await refreshProjects();
+  await preloadProjectCache();
   if (state.authUser?.isAdmin) {
     await refreshAdminUsers();
   }
+  setAppLoading(false);
 }
 
 function handleLogout() {
+  setAppLoading(false);
   clearSession();
   clearCurrentProjectState();
   state.projects = [];
+  state.projectCache = new Map();
   renderProjects();
   renderAdminUsers([]);
   showLoginScreen();
@@ -239,11 +256,17 @@ function showProjectDetailScreen() {
 
 function syncAdminPanel() {
   if (state.authUser?.isAdmin) {
-    adminPanel.classList.remove("hidden");
+    adminToggleWrap.classList.remove("hidden");
+    adminPanel.classList.add("hidden");
     return;
   }
 
+  adminToggleWrap.classList.add("hidden");
   adminPanel.classList.add("hidden");
+}
+
+function toggleAdminPanel() {
+  adminPanel.classList.toggle("hidden");
 }
 
 function createRemoteStorage() {
@@ -306,6 +329,7 @@ async function handleSetupSubmit(event) {
   }
 
   try {
+    setAppLoading(true, "Salvando projeto...");
     if (state.isEditingSetup && state.projectId) {
       const renamedEntries = state.entries.map((entry) => ({
         ...entry,
@@ -327,6 +351,7 @@ async function handleSetupSubmit(event) {
       });
 
       state.projectId = project.id;
+      state.projectCache.set(project.id, project);
       state.isEditingSetup = false;
       await refreshProjects();
       renderCurrentProject();
@@ -351,6 +376,7 @@ async function handleSetupSubmit(event) {
 
     state.userName = nextUserName;
     state.projectId = project.id;
+    state.projectCache.set(project.id, project);
     state.projectName = project.name;
     state.reportType = project.reportType || nextReportType;
     state.entries = Array.isArray(project.entries) ? project.entries : [];
@@ -367,6 +393,8 @@ async function handleSetupSubmit(event) {
   } catch (error) {
     console.error(error);
     window.alert(`Nao foi possivel salvar o projeto. ${error?.message || ""}`.trim());
+  } finally {
+    setAppLoading(false);
   }
 }
 
@@ -382,52 +410,61 @@ async function handleEntrySubmit(event) {
     return;
   }
 
-  const formData = new FormData(entryForm);
-  const value = Number(formData.get("entryValue") || 0);
-  const selectedFiles = Array.from(receiptInput.files || []);
-  if (!validateReceiptFiles(selectedFiles)) {
-    renderReceiptPreview();
-    return;
-  }
-
-  const receipts = await filesToReceiptData(selectedFiles);
-  const entry = {
-    id: buildId(),
-    date: String(formData.get("entryDate") || ""),
-    project: state.projectName,
-    costCenter: String(formData.get("entryCostCenter") || "").trim(),
-    description: String(formData.get("entryDescription") || "").trim(),
-    value,
-    category: state.reportType,
-    receipts,
-  };
-
-  if (!entry.date || !entry.costCenter || !entry.description || value <= 0) {
-    return;
-  }
-
-  state.entries.unshift(entry);
-  renderEntries();
-  resetEntryForm();
-  updateProjectCountLocally(state.projectId, state.entries.length);
-  setProjectFeedback("Item salvo e sincronizando projeto...", false);
-  setEntrySubmitState(true);
+  let optimisticEntryId = "";
 
   try {
+    const formData = new FormData(entryForm);
+    const value = Number(formData.get("entryValue") || 0);
+    const selectedFiles = Array.from(receiptInput.files || []);
+    if (!validateReceiptFiles(selectedFiles)) {
+      renderReceiptPreview();
+      return;
+    }
+
+    setEntryFeedback("");
+    setAppLoading(true, "Preparando item...");
+    const receipts = await filesToReceiptData(selectedFiles);
+    const entry = {
+      id: buildId(),
+      date: String(formData.get("entryDate") || ""),
+      project: state.projectName,
+      costCenter: String(formData.get("entryCostCenter") || "").trim(),
+      description: String(formData.get("entryDescription") || "").trim(),
+      value,
+      category: state.reportType,
+      receipts,
+    };
+    optimisticEntryId = entry.id;
+
+    if (!entry.date || !entry.costCenter || !entry.description || value <= 0) {
+      return;
+    }
+
+    state.entries.unshift(entry);
+    renderEntries();
+    resetEntryForm();
+    updateProjectCountLocally(state.projectId, state.entries.length);
+    setEntryFeedback("Enviando item...", false);
+    setEntrySubmitState(true);
+    setAppLoading(true, "Enviando item...");
+
     await persistCurrentProject();
-    setProjectFeedback("Item salvo com sucesso.", false);
-    refreshProjects().catch((error) => {
+    setEntryFeedback("Item salvo com sucesso.", false);
+    refreshProjects().then(() => preloadProjectCache()).catch((error) => {
       console.error(error);
     });
   } catch (error) {
     console.error(error);
-    state.entries = state.entries.filter((savedEntry) => savedEntry.id !== entry.id);
-    renderEntries();
-    updateProjectCountLocally(state.projectId, state.entries.length);
-    setProjectFeedback("Nao foi possivel salvar o item no projeto.", true);
+    if (optimisticEntryId) {
+      state.entries = state.entries.filter((savedEntry) => savedEntry.id !== optimisticEntryId);
+      renderEntries();
+      updateProjectCountLocally(state.projectId, state.entries.length);
+    }
+    setEntryFeedback("Nao foi possivel salvar o item no projeto.", true);
     window.alert("Nao foi possivel salvar o item no projeto.");
   } finally {
     setEntrySubmitState(false);
+    setAppLoading(false);
   }
 }
 
@@ -454,6 +491,42 @@ function syncCategoryField() {
 async function refreshProjects() {
   state.projects = await state.storage.listProjects();
   renderProjects();
+}
+
+async function preloadProjectCache() {
+  if (!state.projects.length) {
+    return;
+  }
+
+  setAppLoading(true, "Preparando projetos salvos...");
+
+  try {
+    const details = await Promise.all(state.projects.map(async (project) => {
+      if (state.projectCache.has(project.id)) {
+        return state.projectCache.get(project.id);
+      }
+
+      try {
+        return await state.storage.getProject(project.id);
+      } catch (error) {
+        console.error(error);
+        return null;
+      }
+    }));
+
+    details.filter(Boolean).forEach((project) => {
+      state.projectCache.set(project.id, project);
+    });
+    state.projects = state.projects.map((project) => {
+      const cachedProject = state.projectCache.get(project.id);
+      return cachedProject
+        ? { ...project, entryCount: Array.isArray(cachedProject.entries) ? cachedProject.entries.length : 0 }
+        : project;
+    });
+    renderProjects();
+  } finally {
+    setAppLoading(false);
+  }
 }
 
 async function refreshAdminUsers() {
@@ -615,24 +688,32 @@ async function loadProjectIntoForm(projectId) {
     return;
   }
 
-  const project = await state.storage.getProject(projectId);
+  setAppLoading(true, "Abrindo projeto...");
 
-  state.projectId = project.id;
-  state.projectName = project.name;
-  state.userName = project.userName || "";
-  state.reportType = project.reportType || "Reembolso";
-  state.entries = Array.isArray(project.entries) ? project.entries : [];
-  state.isEditingSetup = false;
+  try {
+    const cachedProject = state.projectCache.get(projectId);
+    const project = cachedProject || await state.storage.getProject(projectId);
+    state.projectCache.set(projectId, project);
 
-  userNameInput.value = state.userName;
-  projectNameInput.value = state.projectName;
-  reportTypeInput.value = state.reportType;
-  syncCategoryField();
-  syncSetupButtonLabel();
-  openProjectButton.classList.remove("hidden");
-  renderCurrentProject();
-  showProjectDetailScreen();
-  setProjectFeedback(`Projeto ${state.projectName} aberto. Os itens estao logo abaixo.`, false);
+    state.projectId = project.id;
+    state.projectName = project.name;
+    state.userName = project.userName || "";
+    state.reportType = project.reportType || "Reembolso";
+    state.entries = Array.isArray(project.entries) ? project.entries : [];
+    state.isEditingSetup = false;
+
+    userNameInput.value = state.userName;
+    projectNameInput.value = state.projectName;
+    reportTypeInput.value = state.reportType;
+    syncCategoryField();
+    syncSetupButtonLabel();
+    openProjectButton.classList.remove("hidden");
+    renderCurrentProject();
+    showProjectDetailScreen();
+    setProjectFeedback(`Projeto ${state.projectName} aberto. Os itens estao logo abaixo.`, false);
+  } finally {
+    setAppLoading(false);
+  }
 }
 
 function renderCurrentProject() {
@@ -649,6 +730,7 @@ function clearCurrentProjectState() {
   state.projectId = "";
   state.isEditingSetup = false;
   state.entries = [];
+  setEntryFeedback("");
   userNameInput.value = "";
   projectNameInput.value = "";
   reportTypeInput.value = "Reembolso";
@@ -792,6 +874,7 @@ async function persistCurrentProject() {
   });
 
   state.projectId = project.id;
+  state.projectCache.set(project.id, project);
   updateProjectCountLocally(project.id, state.entries.length);
 }
 
@@ -828,6 +911,19 @@ function setEntrySubmitState(isSaving) {
 
   entrySubmitButton.disabled = isSaving;
   entrySubmitButton.textContent = isSaving ? "Salvando item..." : "Adicionar item";
+}
+
+function setEntryFeedback(message, isError = false) {
+  if (!message) {
+    entryFeedback.textContent = "";
+    entryFeedback.classList.add("hidden");
+    entryFeedback.classList.remove("login-feedback--success");
+    return;
+  }
+
+  entryFeedback.textContent = message;
+  entryFeedback.classList.remove("hidden");
+  entryFeedback.classList.toggle("login-feedback--success", !isError);
 }
 
 async function handleDownload() {
@@ -1248,7 +1344,7 @@ async function filesToReceiptData(files) {
     name: file.name,
     type: file.type || "arquivo",
     size: file.size,
-    dataUrl: await fileToDataUrl(file),
+    dataUrl: await fileToDataUrlForUpload(file),
   })));
 }
 
@@ -1259,6 +1355,63 @@ function fileToDataUrl(file) {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+}
+
+async function fileToDataUrlForUpload(file) {
+  if (!String(file.type || "").startsWith("image/")) {
+    return fileToDataUrl(file);
+  }
+
+  return compressImageFile(file);
+}
+
+async function compressImageFile(file) {
+  const objectUrl = URL.createObjectURL(file);
+
+  try {
+    const image = await loadImageElement(objectUrl);
+    const { width, height } = scaleDimensions(image.naturalWidth, image.naturalHeight, MAX_RECEIPT_IMAGE_DIMENSION);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { alpha: false });
+    context.drawImage(image, 0, 0, width, height);
+
+    return await new Promise((resolve) => {
+      canvas.toBlob(async (blob) => {
+        if (!blob) {
+          resolve(await fileToDataUrl(file));
+          return;
+        }
+
+        const compressedFile = new File([blob], file.name.replace(/\.\w+$/, "") + ".jpg", { type: "image/jpeg" });
+        resolve(await fileToDataUrl(compressedFile));
+      }, "image/jpeg", RECEIPT_IMAGE_QUALITY);
+    });
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function loadImageElement(source) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Nao foi possivel preparar a imagem."));
+    image.src = source;
+  });
+}
+
+function scaleDimensions(width, height, maxDimension) {
+  if (width <= maxDimension && height <= maxDimension) {
+    return { width, height };
+  }
+
+  const ratio = Math.min(maxDimension / width, maxDimension / height);
+  return {
+    width: Math.max(1, Math.round(width * ratio)),
+    height: Math.max(1, Math.round(height * ratio)),
+  };
 }
 
 function handleReceiptChange() {
@@ -1297,6 +1450,12 @@ function setReceiptFeedback(message, isError = true) {
   receiptFeedback.textContent = message;
   receiptFeedback.classList.remove("hidden");
   receiptFeedback.classList.toggle("login-feedback--success", !isError);
+}
+
+function setAppLoading(isLoading, message = "Carregando...") {
+  appLoaderText.textContent = message;
+  appLoader.classList.toggle("hidden", !isLoading);
+  appLoader.setAttribute("aria-hidden", String(!isLoading));
 }
 
 async function api(url, options = {}) {

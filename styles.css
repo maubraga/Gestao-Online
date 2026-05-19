@@ -57,6 +57,43 @@ button {
   display: none !important;
 }
 
+.app-loader {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.74);
+  backdrop-filter: blur(8px);
+}
+
+.app-loader__panel {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  min-width: min(100%, 280px);
+  padding: 22px 18px;
+  border: 1px solid rgba(88, 140, 255, 0.16);
+  background: linear-gradient(180deg, rgba(10, 18, 31, 0.98), rgba(5, 10, 19, 1));
+  box-shadow: var(--shadow);
+}
+
+.app-loader__spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(110, 168, 255, 0.16);
+  border-top-color: var(--orange);
+  border-radius: 999px;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .app-shell {
   width: 100%;
   min-height: 100vh;
@@ -712,6 +749,10 @@ h3 {
 
 .screen-toolbar__button {
   min-height: 48px;
+}
+
+#adminToggleWrap {
+  display: grid;
 }
 
 .setup-actions {
